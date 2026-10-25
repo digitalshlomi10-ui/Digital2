@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>היכלי פרוטליקס</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#004d77">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header><h1 id="synagogue-title">היכלי פרוטליקס</h1></header>
+    <div class="main-content">
+        <!-- דף 1: מנחה -->
+        <div class="page active" id="page-weekdays">
+            <div class="prayer-container-3">
+                <div class="card-wrapper" style="max-width:550px;">
+                    <div class="prayer-name" style="font-size:4.2rem; padding:16px 70px;">תפילת מנחה</div>
+                    <div class="prayer-card" style="padding:50px 30px;"><div class="prayer-time" id="time-mincha" style="font-size:7.5rem; font-weight:900;">--:--</div></div>
+                </div>
+            </div>
+        </div>
+        <!-- דף 2: פרשת השבוע ומועדי כניסה/יציאה -->
+        <div class="page" id="page-times">
+            <div class="parasha-title" id="display-parasha">פרשת השבוע</div>
+            <div class="prayer-container-3">
+                <div class="card-wrapper"><div class="prayer-name">כניסת השבת</div><div class="prayer-card"><div class="prayer-time" id="shabbat-start">--:--</div></div></div>
+                <div class="card-wrapper"><div class="prayer-name">יציאת השבת</div><div class="prayer-card"><div class="prayer-time" id="shabbat-end">--:--</div></div></div>
+            </div>
+        </div>
+        <!-- דף 3: נר תמיד בהיכל ה' -->
+        <div class="page" id="page-memorial">
+            <div class="page-title">🕯️ נר תמיד בהיכל ה' 🕯️</div>
+            <div class="memorial-grid" id="memorial-box-grid"></div>
+        </div>
+    </div>
+    <div class="bottom-area">
+        <div class="marquee-container"><div class="marquee-text" id="marquee-box">טוען הודעות מערכת...</div></div>
+        <footer>
+            <div class="footer-right" id="heb-date">טוען תאריך עברי...</div>
+            <div class="footer-center">
+                <div>זריחה: <strong id="sun-rise">--:--</strong></div>
+                <div>שקיעה: <strong id="sun-set">--:--</strong></div>
+            </div>
+            <div class="footer-left" id="footer-clock">00:00:00</div>
+        </footer>
+    </div>
+    <script>
+        // pageIds נבנה דינמית לפי מספר עמודי הנפטרים
+        let pageIds = ["page-weekdays", "page-times", "page-memorial"];
+        let currentIdx = 0, slideInterval = null, globalSun = null;
+        let MEMORIAL_PER_PAGE = 9; // ברירת מחדל: 3 עמודות × 3 שורות (השורה הראשונה שמורה תמיד לשבוע אזכרה) — ניתן לשינוי מהגדרות הניהול
+        let MEMORIAL_COLS = 3; // ניתן לשינוי מהגדרות הניהול
+
+        const dayLettersMap = {
+            1:"א'", 2:"ב'", 3:"ג'", 4:"ד'", 5:"ה'", 6:"ו'", 7:"ז'", 8:"ח'", 9:"ט'", 10:"י'",
+            11:'י"א', 12:'י"ב', 13:'י"ג', 14:'י"ד', 15:'ט"ו', 16:'ט"ז', 17:'י"ז', 18:'י"ח', 19:'י"ט', 20:"כ'",
+            21:'כ"א', 22:'כ"ב', 23:'כ"ג', 24:'כ"ד', 25:'כ"ה', 26:'כ"ו', 27:'כ"ז', 28:'כ"ח', 29:'כ"ט', 30:"ל'"
+        };
+
+        // ───── שעון ─────
+        setInterval(() => {
+            document.getElementById('footer-clock').textContent =
+                new Date().toLocaleTimeString('he-IL', { hour12: false });
+        }, 1000);
+
+        // ───── מצגת דפים ─────
+        function startSlideshow(seconds) {
+            if (slideInterval) clearInterval(slideInterval);
+            slideInterval = setInterval(() => {
+                document.querySelectorAll('.page.active').forEach(p => p.classList.remove('active'));
+                currentIdx = (currentIdx + 1) % pageIds.length;
+                const next = document.getElementById(pageIds[currentIdx]);
+                if (next) next.classList.add('active');
+            }, seconds * 1000);
+        }
+
+        // ───── המרת מספר לאות עברית ─────
+        function numToHebrewGematria(num, isYear = false) {
+            if (dayLettersMap[num] && !isYear) return dayLettersMap[num];
+            const ones = ["","א","ב","ג","ד","ה","ו","ז","ח","ט"];
+            const tens = ["","י","כ","ל","מ","נ","ס","ע","פ","צ"];
+            const hundreds = ["","ק","ר","ש","ת"];
+            if (isYear) num = num % 1000;
+            let result = "";
+            if (num >= 400) { result += "ת"; num -= 400; }
+            while (num >= 100) {
+                for (let i = 4; i > 0; i--) {
+                    if (num >= i * 100) { result += hundreds[i]; num -= i * 100; break; }
+                }
+            }
+            if (num === 15) return result + "טו";
+            if (num === 16) return result + "טז";
+            return result + tens[Math.floor(num / 10)] + ones[num % 10];
+        }
+
+        // ───── זמני שמש לכרמיאל — חישוב אסטרונומי (דיוק ~דקה), שעון ישראל כולל מעבר חורף/קיץ ─────
+        const SUN_LOC = { lat: 32.9186, lon: 35.2961, tz: 'Asia/Jerusalem' };
+        const CANDLE_BEFORE_SUNSET = 31;  // דקות לפני שקיעה — לאשר מול הרב/הגבאי
+        const HAVDALAH_AFTER_SUNSET = 44; // דקות אחרי שקיעה (צאת הכוכבים) — לאשר מול הרב/הגבאי
+
+        function sunEventMinutes(y, mo, d, rising) {
+            const rad = Math.PI / 180, zenith = 90.8333;
+            const N = Math.floor((Date.UTC(y, mo, d) - Date.UTC(y, 0, 0)) / 864e5);
+            const lngHour = SUN_LOC.lon / 15;
+            const t = N + ((rising ? 6 : 18) - lngHour) / 24;
+            const M = 0.9856 * t - 3.289;
+            let L = M + 1.916 * Math.sin(M * rad) + 0.020 * Math.sin(2 * M * rad) + 282.634;
+            L = ((L % 360) + 360) % 360;
+            let RA = Math.atan(0.91764 * Math.tan(L * rad)) / rad;
+            RA = ((RA % 360) + 360) % 360;
+            RA += Math.floor(L / 90) * 90 - Math.floor(RA / 90) * 90;
+            RA /= 15;
+            const sinDec = 0.39782 * Math.sin(L * rad), cosDec = Math.cos(Math.asin(sinDec));
+            const cosH = (Math.cos(zenith * rad) - sinDec * Math.sin(SUN_LOC.lat * rad)) / (cosDec * Math.cos(SUN_LOC.lat * rad));
+            if (cosH > 1 || cosH < -1) return null;
+            const H = (rising ? 360 - Math.acos(cosH) / rad : Math.acos(cosH) / rad) / 15;
+            const T = H + RA - 0.06571 * t - 6.622;
+            const utHours = (((T - lngHour) % 24) + 24) % 24;
+            // המרה לשעון ישראל לפי התאריך עצמו (כולל DST)
+            const utc = new Date(Date.UTC(y, mo, d) + utHours * 3600e3);
+            const parts = new Intl.DateTimeFormat('en-GB', { timeZone: SUN_LOC.tz, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(utc);
+            const h = parseInt(parts.find(p => p.type === 'hour').value) % 24;
+            const m = parseInt(parts.find(p => p.type === 'minute').value);
+            return h * 60 + m;
+        }
+        function fmtMins(mins) {
+            mins = ((Math.round(mins) % 1440) + 1440) % 1440;
+            return String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
+        }
+        // שקיעה/זריחה להיום + כניסת/יציאת שבת של השבת הקרובה (בשבת עצמה — של השבת הנוכחית)
+        function getPreciseOfflineSunTimes() {
+            const now = new Date();
+            const y = now.getFullYear(), mo = now.getMonth(), d = now.getDate();
+            const rise = sunEventMinutes(y, mo, d, true);
+            const set = sunEventMinutes(y, mo, d, false);
+            const dow = now.getDay();
+            const toFri = dow === 6 ? -1 : (5 - dow + 7) % 7;
+            const fri = new Date(y, mo, d + toFri), sat = new Date(y, mo, d + toFri + 1);
+            const friSet = sunEventMinutes(fri.getFullYear(), fri.getMonth(), fri.getDate(), false);
+            const satSet = sunEventMinutes(sat.getFullYear(), sat.getMonth(), sat.getDate(), false);
+            return { r: fmtMins(rise), s: fmtMins(set), c: fmtMins(friSet - CANDLE_BEFORE_SUNSET), e: fmtMins(satSet + HAVDALAH_AFTER_SUNSET) };
+        }
+
+        // ───── תזוזת זמן לפי דקות ─────
+        function offsetTime(timeStr, offset) {
+            const [h0, m0] = timeStr.split(':').map(Number);
+            let totalMins = h0 * 60 + m0 + offset;
+            totalMins = ((totalMins % 1440) + 1440) % 1440; // wrap around 24h
+            const h = Math.floor(totalMins / 60);
+            const m = totalMins % 60;
+            return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+        }
+
+        // ───── עזרים ─────
+        function esc(v) {
+            return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+        function localISO(d) {
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        }
+        // מוודא שדף אחד בדיוק פעיל, ושה-index לא חורג מרשימת הדפים (קורה כשמספר עמודי הנפטרים משתנה)
+        function syncActivePage() {
+            if (currentIdx >= pageIds.length) currentIdx = 0;
+            const el = document.getElementById(pageIds[currentIdx]);
+            const active = document.querySelectorAll('.page.active');
+            if (el && !(active.length === 1 && active[0] === el)) {
+                active.forEach(p => p.classList.remove('active'));
+                el.classList.add('active');
+            }
+        }
+
+        // ───── פרשת השבוע ─────
+        function getParasha() {
+            const PARSHIOT = [
+                "בראשית","נח","לך לך","וירא","חיי שרה","תולדות","ויצא","וישלח","וישב","מקץ","ויגש","ויחי",
+                "שמות","וארא","בא","בשלח","יתרו","משפטים","תרומה","תצוה","כי תשא","ויקהל-פקודי",
+                "ויקרא","צו","שמיני","תזריע-מצורע","אחרי מות-קדושים","אמור","בהר-בחוקותי",
+                "במדבר","נשא","בהעלותך","שלח","קורח","חוקת","בלק","פנחס","מטות-מסעי",
+                "דברים","ואתחנן","עקב","ראה","שופטים","כי תצא","כי תבוא","נצבים-וילך","האזינו","וזאת הברכה"
+            ];
+
+            function nextSaturday(d) {
+                const s = new Date(d);
+                s.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7));
+                s.setHours(0,0,0,0);
+                return s;
+            }
+
+            // 1) ערך עדכני שנשלף מ-Hebcal (מתחשב בחגים ובפרשיות מחוברות)
+            try {
+                const w = JSON.parse(localStorage.getItem('protolix_parasha') || 'null');
+                if (w && w.name) {
+                    const today = localISO(new Date());
+                    const weekAhead = localISO(new Date(Date.now() + 6 * 864e5));
+                    if (w.for >= today && w.for <= weekAhead) return w.name;
+                }
+            } catch(e) {}
+
+            // 2) גיבוי אופליין: חישוב מעוגן (לא מכסה חגים/פרשיות מחוברות — העוגן מכוון לשבת וירא 31.10.2026)
+            let ANCHOR_DATE = new Date(2026, 9, 31);
+            let ANCHOR_PARASHA = 3; // וירא
+            try {
+                const stored = localStorage.getItem('protolix_parasha_anchor');
+                if (stored) {
+                    const a = JSON.parse(stored);
+                    ANCHOR_DATE = new Date(a.date);
+                    ANCHOR_PARASHA = parseInt(a.idx);
+                }
+            } catch(e) {}
+
+            const sat = nextSaturday(new Date());
+            const diffWeeks = Math.round((sat - ANCHOR_DATE) / (7 * 24 * 60 * 60 * 1000));
+            let idx = (ANCHOR_PARASHA + diffWeeks) % PARSHIOT.length;
+            if (idx < 0) idx += PARSHIOT.length;
+            if (PARSHIOT[idx] === "וזאת הברכה") idx = (idx + 1) % PARSHIOT.length;
+            return PARSHIOT[idx];
+        }
+
+        async function refreshParashaFromWeb() {
+            try {
+                const res = await fetch('https://www.hebcal.com/shabbat?cfg=json&geonameid=281184&i=on');
+                const data = await res.json();
+                const it = (data.items || []).find(x => x.category === 'parashat');
+                if (!it) return;
+                const name = (it.hebrew || '').replace(/^פרשת\s*/, '').trim();
+                if (!name) return;
+                localStorage.setItem('protolix_parasha', JSON.stringify({ for: it.date, name }));
+                document.getElementById('display-parasha').textContent = 'פרשת השבוע: ' + name;
+            } catch(e) { /* אופליין — נשארים עם הגיבוי */ }
+        }
+
+        // ───── מיון לפי קרבה לתאריך עברי נוכחי ─────
+        const hebrewMonthOrder = {
+            'תשרי':1, 'חשוון':2, 'כסלו':3, 'טבת':4, 'שבט':5,
+            'אדר':6, 'אדר א':7, 'אדר ב':8,
+            'ניסן':9, 'אייר':10, 'סיוון':11, 'תמוז':12, 'אב':13, 'אלול':14
+        };
+
+        function sortByProximity(list, currentDay, currentMonthName) {
+            const currentMonthNum = hebrewMonthOrder[currentMonthName] || 1;
+            const TOTAL_MONTHS = 14;
+
+            function daysUntilYahrzeit(item) {
+                const itemMonthNum = hebrewMonthOrder[item.month] || 1;
+                // חשב מרחק בחודשים קדימה (מעגלי)
+                let monthDiff = (itemMonthNum - currentMonthNum + TOTAL_MONTHS) % TOTAL_MONTHS;
+                // אם אותו חודש — חשב לפי יום
+                if (monthDiff === 0) {
+                    const dayDiff = item.day - currentDay;
+                    if (dayDiff >= 0) return dayDiff;           // עוד השנה
+                    return TOTAL_MONTHS * 30 + dayDiff + 30;    // שנה הבאה
+                }
+                // חודש שונה — הערכה גסה בימים
+                return monthDiff * 30 + (item.day - currentDay);
+            }
+
+            return [...list].sort((a, b) => daysUntilYahrzeit(a) - daysUntilYahrzeit(b));
+        }
+
+        // ───── כרטיסי נפטרים עם עימוד ויארצייט בראש ─────
+        function buildMemorialCardHTML(item, isHighlight) {
+            const highlightClass = isHighlight ? "memorial-card highlight" : "memorial-card";
+            const yearText = item.year ? ` ${esc(item.year)}` : '';
+            return `<div class="${highlightClass}">
+                <div class="m-name">${esc(item.name)}</div>
+                <div class="m-date">${dayLettersMap[item.day] || esc(item.day)} ב${esc(item.month)}${yearText}</div>
+                <div class="m-suffix">ת.נ.צ.ב.ה.</div>
+            </div>`;
+        }
+
+        function buildYahrzeitRowHTML(yahrzeitItems, maxCount) {
+            const items = yahrzeitItems.slice(0, maxCount);
+            if (items.length === 0) return '';
+            const cards = items.map(item => {
+                const yearText = item.year ? ` ${esc(item.year)}` : '';
+                return `<div class="memorial-card highlight yahrzeit-card">
+                    <div class="yahrzeit-label">🕯️ שבוע אזכרה 🕯️</div>
+                    <div class="m-name">${esc(item.name)}</div>
+                    <div class="m-date">${dayLettersMap[item.day] || esc(item.day)} ב${esc(item.month)}${yearText}</div>
+                    <div class="m-suffix">ת.נ.צ.ב.ה.</div>
+                </div>`;
+            }).join('');
+            return `<div class="yahrzeit-row">${cards}</div>`;
+        }
+
+        function loadMemorialCards(config) {
+            loadMemorialCardsInner(config);
+            syncActivePage();
+        }
+
+        function loadMemorialCardsInner(config) {
+            document.querySelectorAll('.page-memorial-extra').forEach(el => el.remove());
+
+            const baseMemorial = document.getElementById('page-memorial');
+            const list = config.deceasedList || [];
+            pageIds = ["page-weekdays", "page-times"]; // page-memorial מתווסף בהמשך, אחרי דפי שבוע אזכרה אם יש
+
+            if (list.length === 0) {
+                document.getElementById('memorial-box-grid').innerHTML =
+                    '<div style="color:rgba(255,255,255,0.6);font-size:2rem;grid-column:span 3;text-align:center;padding-top:40px;">אין נפטרים ברשימה</div>';
+                pageIds.push('page-memorial');
+                return;
+            }
+
+            // יארצייט השבוע: בודקים את התאריך העברי של כל אחד מ-8 הימים הקרובים (היום עד היום+7)
+            // — בלי הערכות של "30 יום לחודש", ועם התמודדות נכונה עם אדר / אדר א / אדר ב בשנה מעוברת.
+            const normMonth = m => {
+                m = String(m).replace(/[׳'"״]/g, '').replace(/\s+/g, ' ').trim();
+                if (m === 'סיון') m = 'סיוון';
+                if (m === 'חשון') m = 'חשוון';
+                return m;
+            };
+            const upcoming = [];
+            try {
+                const fmt = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {day:'numeric', month:'long'});
+                for (let i = 0; i <= 7; i++) {
+                    const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + i);
+                    const parts = fmt.formatToParts(d);
+                    upcoming.push({
+                        day: parseInt(parts.find(p => p.type === 'day').value),
+                        month: normMonth(parts.find(p => p.type === 'month').value)
+                    });
+                }
+            } catch(e) {}
+
+            const monthMatches = (itemMonth, curMonth) => {
+                if (itemMonth === curMonth) return true;
+                if (curMonth === 'אדר' && (itemMonth === 'אדר א' || itemMonth === 'אדר ב')) return true; // שנה פשוטה
+                if (curMonth === 'אדר ב' && itemMonth === 'אדר') return true;                           // שנה מעוברת
+                return false;
+            };
+            const isYahrzeit = item => {
+                const m = normMonth(item.month);
+                const day = parseInt(item.day);
+                return upcoming.some(u => u.day === day && monthMatches(m, u.month));
+            };
+
+            // מיין לפי קרבה לתאריך עברי נוכחי — רק לקביעת יארצייטים, לא לסידור הרשימה
+            const sortedList = list; // שמור על הסדר הידני שנקבע על ידי הגבאי
+
+            // הפרד יארצייט משאר הרשימה
+            const yahrzeitItems = sortedList.filter(isYahrzeit);
+            const regularItems  = sortedList.filter(item => !isYahrzeit(item));
+
+            const yahrzeitMaxCount = parseInt(config.yahrzeitMaxCount) || 3;
+
+            MEMORIAL_PER_PAGE = parseInt(config.memorialPerPage) || 9;
+            MEMORIAL_COLS = parseInt(config.memorialCols) || 3;
+            const memorialRows = Math.ceil(MEMORIAL_PER_PAGE / MEMORIAL_COLS);
+            const gridRowsStyle = `grid-template-columns: repeat(${MEMORIAL_COLS}, 1fr); grid-template-rows: repeat(${memorialRows}, 1fr);`;
+
+            // אם יש יותר נפטרים בשבוע אזכרה מהמכסה של השורה המודגשת —
+            // הם לא נזרקים! במקום זאת נבנה עבורם דף/ים ייעודיים מלאים,
+            // ולא נציג את השורה הקטנה (כדי לא לכפול אותם).
+            const useFullYahrzeitPages = yahrzeitItems.length > yahrzeitMaxCount;
+            const yahrzeitRowHTML = useFullYahrzeitPages ? '' : buildYahrzeitRowHTML(yahrzeitItems, yahrzeitMaxCount);
+
+            if (useFullYahrzeitPages) {
+                const totalYahrzeitPages = Math.ceil(yahrzeitItems.length / MEMORIAL_PER_PAGE);
+                for (let pageNum = 0; pageNum < totalYahrzeitPages; pageNum++) {
+                    const chunk = yahrzeitItems.slice(pageNum * MEMORIAL_PER_PAGE, (pageNum + 1) * MEMORIAL_PER_PAGE);
+                    const gridHTML = chunk.map(item => buildMemorialCardHTML(item, true)).join('');
+                    const pageIndicator = totalYahrzeitPages > 1
+                        ? `<div class="memorial-page-indicator">${pageNum + 1} / ${totalYahrzeitPages}</div>`
+                        : '';
+                    const extraId = `page-yahrzeit-${pageNum}`;
+                    const extraPage = document.createElement('div');
+                    extraPage.className = 'page page-memorial-extra page-yahrzeit-extra';
+                    extraPage.id = extraId;
+                    extraPage.innerHTML = `
+                        <div class="page-title">🕯️ שבוע אזכרה 🕯️</div>
+                        <div class="memorial-grid memorial-grid-4" style="${gridRowsStyle}">${gridHTML}</div>
+                        ${pageIndicator}
+                    `;
+                    baseMemorial.parentNode.insertBefore(extraPage, baseMemorial.nextSibling);
+                    pageIds.push(extraId);
+                }
+            }
+
+            // page-memorial (הדף הראשי, עם עמוד 1 של הרשימה הרגילה) תמיד בא אחרי דפי שבוע אזכרה
+            pageIds.push('page-memorial');
+
+            const totalPages = Math.ceil(regularItems.length / MEMORIAL_PER_PAGE) || 1;
+
+            for (let pageNum = 0; pageNum < totalPages; pageNum++) {
+                const chunk = regularItems.slice(pageNum * MEMORIAL_PER_PAGE, (pageNum + 1) * MEMORIAL_PER_PAGE);
+                const gridHTML = chunk.map(item => buildMemorialCardHTML(item, false)).join('');
+
+                const pageIndicator = totalPages > 1
+                    ? `<div class="memorial-page-indicator">${pageNum + 1} / ${totalPages}</div>`
+                    : '';
+
+                if (pageNum === 0) {
+                    const baseGrid = document.getElementById('memorial-box-grid');
+                    baseGrid.innerHTML = gridHTML;
+                    baseGrid.setAttribute('style', gridRowsStyle);
+                    baseMemorial.querySelector('.yahrzeit-row')?.remove();
+                    baseMemorial.querySelector('.memorial-page-indicator')?.remove();
+                    if (yahrzeitRowHTML) {
+                        document.getElementById('memorial-box-grid').insertAdjacentHTML('beforebegin', yahrzeitRowHTML);
+                    }
+                    if (totalPages > 1) baseMemorial.insertAdjacentHTML('beforeend', pageIndicator);
+                } else {
+                    const extraId = `page-memorial-${pageNum}`;
+                    const extraPage = document.createElement('div');
+                    extraPage.className = 'page page-memorial-extra';
+                    extraPage.id = extraId;
+                    extraPage.innerHTML = `
+                        <div class="page-title">🕯️ נר תמיד בהיכל ה' 🕯️</div>
+                        ${yahrzeitRowHTML}
+                        <div class="memorial-grid memorial-grid-4" style="${gridRowsStyle}">${gridHTML}</div>
+                        ${pageIndicator}
+                    `;
+                    baseMemorial.parentNode.insertBefore(extraPage, baseMemorial.nextSibling);
+                    pageIds.push(extraId);
+                }
+            }
+        }
+
+        // ───── חישוב ראשי ─────
+        function calculateAndDisplay() {
+            globalSun = getPreciseOfflineSunTimes();
+            document.getElementById('sun-rise').textContent = globalSun.r;
+            document.getElementById('sun-set').textContent = globalSun.s;
+
+            const defaultConfig = {
+                pageInterval: '10',
+                synagogueName: 'היכלי פרוטליקס',
+                titleColor: '#f1f5f9',
+                shacharitTime: '05:45',
+                minchaMode: 'auto',
+                minchaOffset: '-31',
+                minchaTime: '19:18',
+                arvitMode: 'auto',
+                arvitOffset: '20',
+                arvitTime: '20:12',
+                shabbatMinchaErev: "15 דק' לאחר נרות",
+                shabbatShacharit: '08:00',
+                shabbatMincha: '18:00',
+                shabbatArvitMotzei: "20 דק' לאחר שקיעה",
+                announcement: 'ברוכים הבאים להיכלי פרוטליקס.',
+                deceasedList: []
+            };
+
+            let config = defaultConfig;
+            try {
+                const stored = localStorage.getItem('protolix_config');
+                if (stored) config = Object.assign({}, defaultConfig, JSON.parse(stored));
+            } catch(e) {}
+
+            startSlideshow(parseInt(config.pageInterval) || 10);
+
+            // ── כותרת בית הכנסת ──
+            const titleEl = document.getElementById('synagogue-title');
+            titleEl.textContent = config.synagogueName || defaultConfig.synagogueName;
+            titleEl.style.color = config.titleColor || defaultConfig.titleColor;
+
+            document.getElementById('marquee-box').textContent = config.announcement || defaultConfig.announcement;
+
+            // ── מנחה חול ──
+            const mOffset = parseInt(config.minchaOffset);
+            document.getElementById('time-mincha').textContent =
+                config.minchaMode === 'auto'
+                    ? offsetTime(globalSun.s, isNaN(mOffset) ? -20 : mOffset)
+                    : config.minchaTime;
+
+            // ── פרשת השבוע + כניסה/יציאה ──
+            const parasha = getParasha();
+            document.getElementById('display-parasha').textContent = 'פרשת השבוע: ' + parasha;
+            document.getElementById('shabbat-start').textContent = globalSun.c;
+            document.getElementById('shabbat-end').textContent = globalSun.e;
+
+            loadMemorialCards(config);
+
+            // ── צבעי קוביות נפטרים ──
+            let styleTag = document.getElementById('memorial-style');
+            if (!styleTag) { styleTag = document.createElement('style'); styleTag.id = 'memorial-style'; document.head.appendChild(styleTag); }
+            styleTag.textContent = '';
+            if (config.memorialBgColor || config.memorialNameColor || config.memorialDateColor || config.memorialBorderColor || config.memorialNameSize || config.memorialDateSize || config.memorialPageBgColor) {
+                const bw = config.memorialBorderWidth !== undefined ? config.memorialBorderWidth : '1';
+                const bc = config.memorialBorderColor || 'rgba(255,255,255,0.3)';
+                const nameSize = config.memorialNameSize ? `${config.memorialNameSize}rem` : '';
+                const dateSize = config.memorialDateSize ? `${config.memorialDateSize}rem` : '';
+                const pageBg = config.memorialPageBgColor || '#0a0a0a';
+                styleTag.textContent = `
+                    #page-memorial.active, .page-memorial-extra.active { background-color: ${pageBg} !important; }
+                    .memorial-card:not(.highlight) { background: ${config.memorialBgColor || 'transparent'} !important; border: ${bw}px solid ${bc} !important; }
+                    .memorial-card:not(.highlight) .m-name { color: ${config.memorialNameColor || '#ffffff'} !important; ${nameSize ? `font-size: ${nameSize} !important;` : ''} }
+                    .memorial-card:not(.highlight) .m-date { color: ${config.memorialDateColor || '#e8e8e8'} !important; ${dateSize ? `font-size: ${dateSize} !important;` : ''} }
+                `;
+            }
+
+            // ── תאריך עברי ──
+            try {
+                const formatter = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {day:'numeric',month:'long',year:'numeric'});
+                const parts = formatter.formatToParts(new Date());
+                let dayVal = parseInt(parts.find(p => p.type === 'day').value);
+                let yearVal = parseInt(parts.find(p => p.type === 'year').value);
+                let monthStr = parts.find(p => p.type === 'month').value;
+                let dayHeb = dayLettersMap[dayVal] || String(dayVal);
+                let yearHeb = numToHebrewGematria(yearVal, true);
+                // הוסף גרשיים לשנה רק אם אין כבר
+                if (yearHeb.length > 1) {
+                    yearHeb = yearHeb.slice(0,-1) + '"' + yearHeb.slice(-1);
+                }
+                yearHeb = "ה'" + yearHeb;
+                document.getElementById('heb-date').textContent = `${dayHeb} ב${monthStr} ${yearHeb}`;
+            } catch(e) { console.error('Hebrew date error:', e); }
+        }
+
+        calculateAndDisplay();
+        refreshParashaFromWeb();
+
+        // רענון בחצות — אחרת התאריך העברי, הפרשה ושבוע האזכרה נשארים תקועים על היום שבו הדף נטען
+        let lastDay = new Date().toDateString();
+        setInterval(() => {
+            const today = new Date().toDateString();
+            if (today !== lastDay) { lastDay = today; calculateAndDisplay(); refreshParashaFromWeb(); }
+        }, 60000);
+
+        if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    </script>
+
+    <!-- Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBsPV3GhppKWG7L7PdD1tq5VG-WIxkyEvc",
+            authDomain: "ai-screen--2.firebaseapp.com",
+            projectId: "ai-screen--2",
+            storageBucket: "ai-screen--2.firebasestorage.app",
+            messagingSenderId: "98308389383",
+            appId: "1:98308389383:web:7642951a398d2703f248a2"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // האזן לשינויים בזמן אמת — כל עדכון מהנייד יופיע מיד על המסך
+        onSnapshot(doc(db, "protolix", "config"), (docSnap) => {
+            if (docSnap.exists()) {
+                localStorage.setItem('protolix_config', JSON.stringify(docSnap.data()));
+                calculateAndDisplay();
+            }
+        });
+    </script>
+</body>
+</html>
