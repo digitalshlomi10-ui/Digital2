@@ -510,6 +510,9 @@
                 📤 ייבא CSV נפטרים
                 <input type="file" accept=".csv" onchange="importCSV(event)" style="display:none;">
             </label>
+            <p style="font-size:0.85rem;color:#5a7a8a;margin:14px 0 8px 0;">שחזור מהלוח הישן: מוסיף נפטרים שנשמרו במקום הישן (Firebase והדפדפן הזה), בלי כפילויות. הקריאה בלבד — שום דבר לא נמחק או משתנה שם.</p>
+            <button class="btn" style="background:linear-gradient(135deg,#0d6efd,#0a58ca);color:white;" onclick="restoreFromOldLocation()">♻️ שחזר נפטרים מהמקום הישן</button>
+
         </div>
     </div>
 
@@ -527,6 +530,46 @@
         19:'י"ט', 20:"כ'", 21:'כ"א', 22:'כ"ב', 23:'כ"ג', 24:'כ"ד', 25:'כ"ה',
         26:'כ"ו', 27:'כ"ז', 28:'כ"ח', 29:'כ"ט', 30:"ל'"
     };
+
+    async function restoreFromOldLocation() {
+        const keyOf = d => [String(d.name || '').trim(), d.day, String(d.month || '').trim()].join('|');
+        const found = [];
+        let sources = [];
+        try {
+            const local = JSON.parse(localStorage.getItem('synagogue_config') || 'null');
+            if (local && Array.isArray(local.deceasedList) && local.deceasedList.length) {
+                found.push(...local.deceasedList); sources.push('הדפדפן (' + local.deceasedList.length + ')');
+            }
+        } catch (e) {}
+        try {
+            if (window._firestoreDb && window._firestoreFns && window._firestoreFns.getDoc) {
+                const { doc, getDoc } = window._firestoreFns;
+                const snap = await getDoc(doc(window._firestoreDb, 'synagogue', 'config'));
+                if (snap.exists() && Array.isArray(snap.data().deceasedList) && snap.data().deceasedList.length) {
+                    found.push(...snap.data().deceasedList); sources.push('Firebase (' + snap.data().deceasedList.length + ')');
+                }
+            }
+        } catch (e) {
+            showToast('⚠️ לא הצלחתי לקרוא מ-Firebase הישן (ייתכן שחסומה גישה)', '#f59e0b');
+        }
+        if (found.length === 0) { showToast('⚠️ לא נמצאו נפטרים במקום הישן', '#f59e0b'); return; }
+
+        const existing = new Set(deceasedArray.map(keyOf));
+        const toAdd = [];
+        found.forEach(d => {
+            if (!d || !d.name || !d.month) return;
+            const item = { name: String(d.name).trim(), day: parseInt(d.day), month: String(d.month).trim(), year: d.year || '' };
+            if (isNaN(item.day)) return;
+            const k = keyOf(item);
+            if (!existing.has(k)) { existing.add(k); toAdd.push(item); }
+        });
+        if (toAdd.length === 0) { showToast('✅ הכול כבר ברשימה — אין מה להוסיף'); return; }
+        if (!confirm('נמצאו ' + toAdd.length + ' נפטרים חדשים במקום הישן — מקורות: ' + sources.join(', ') + '.\nלהוסיף אותם לרשימה?')) return;
+        deceasedArray = [...deceasedArray, ...toAdd];
+        renderDeceasedList();
+        saveAll(true);
+        showToast('✅ שוחזרו ' + toAdd.length + ' נפטרים');
+    }
 
     function escHtml(v) {
         return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1000,7 +1043,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
     window._firestoreDb = db;
-    window._firestoreFns = { doc, setDoc };
+    window._firestoreFns = { doc, setDoc, getDoc };
 
     // טען מ-Firebase בפתיחה
     try {

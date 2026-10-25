@@ -493,6 +493,9 @@
                 📤 ייבא CSV נפטרים
                 <input type="file" accept=".csv" onchange="importCSV(event)" style="display:none;">
             </label>
+            <p style="font-size:0.85rem;color:#5a7a8a;margin:14px 0 8px 0;">שחזור מהלוח הישן: מוסיף נפטרים שנשמרו במקום הישן (Firebase והדפדפן הזה), בלי כפילויות. הקריאה בלבד — שום דבר לא נמחק או משתנה שם.</p>
+            <button class="btn" style="background:linear-gradient(135deg,#0d6efd,#0a58ca);color:white;" onclick="restoreFromOldLocation()">♻️ שחזר נפטרים מהמקום הישן</button>
+
         </div>
     </div>
 
@@ -958,7 +961,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
     window._firestoreDb = db;
-    window._firestoreFns = { doc, setDoc };
+    window._firestoreFns = { doc, setDoc, getDoc };
 
     // טען מ-Firebase בפתיחה
     try {
